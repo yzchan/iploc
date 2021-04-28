@@ -33,6 +33,10 @@ func main() {
 
 ## Benchmarks
 
+```shell
+go test -v -run="none" -bench=. -benchmem -benchtime=3s
+```
+
 ```
 // 测试环境 2017款13寸MBP 8GB(2133MHz)
 goos: darwin
@@ -40,11 +44,12 @@ goarch: amd64
 pkg: github.com/yzchan/ip-locate
 cpu: Intel(R) Core(TM) i5-7360U CPU @ 2.30GHz
 BenchmarkFind
-BenchmarkFind-4                  1518062               795.4 ns/op           616 B/op          8 allocs/op
+BenchmarkFind-4                  5165304               699.5 ns/op           568 B/op          6 allocs/op
 BenchmarkFindParallel
-BenchmarkFindParallel-4          2793681               420.8 ns/op           616 B/op          8 allocs/op
+BenchmarkFindParallel-4         10315946               573.7 ns/op           568 B/op          6 allocs/op
 PASS
-ok      github.com/yzchan/ip-locate     3.811s
+ok      github.com/yzchan/ip-locate     10.705s
+
 
 ```
 
