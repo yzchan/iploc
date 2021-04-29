@@ -24,8 +24,8 @@ type QQWryParser struct {
 	useMap    bool
 }
 
-func NewQQWryParser(filepath string) (q QQWryParser, err error) {
-	q = QQWryParser{}
+func NewQQWryParser(filepath string) (q *QQWryParser, err error) {
+	q = &QQWryParser{}
 
 	f, err := os.OpenFile(filepath, os.O_RDONLY, 0400)
 	if err != nil {

@@ -15,12 +15,12 @@ func TestFind(t *testing.T) {
 		recordB string
 	}{
 		{"0.0.0.1", "IANA", "保留地址"},
-		{"127.0.0.1", "本机地址", " CZ88.NET"},
+		{"127.0.0.1", "本机地址", ""},
 		{"255.255.255.1", "纯真网络", "2021年04月14日IP数据"},
 	}
 	q, err := NewQQWryParser(filePath)
 	if err != nil {
-		t.Fatal("读取到ip库文件失败")
+		t.Fatal("读取ip库文件失败")
 	}
 	//q.FormatMap() // 格式化数据到map
 	t.Log("开始测试Find函数")
