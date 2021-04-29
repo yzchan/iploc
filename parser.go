@@ -58,6 +58,12 @@ func (q *QQWryParser) Find(ipStr string) (recordA string, recordB string) {
 	return q.readRecords(areaOffset)
 }
 
+// 返回版本信息
+func (q *QQWryParser) Version() string {
+	a, b := q.Find("255.255.255.0")
+	return a + b
+}
+
 func (q *QQWryParser) FormatMap() {
 	q.maps = make(map[uint32]record, q.Len)
 	q.useMap = true
@@ -129,6 +135,9 @@ func (q *QQWryParser) readRecords(offset uint32) (textA string, textB string) {
 	var pos2 uint32
 	textA, pos2 = q.readRecord(offset + 4)
 	textB, _ = q.readRecord(pos2)
+	if textB == " CZ88.NET" {
+		textB = ""
+	}
 	return
 }
 
