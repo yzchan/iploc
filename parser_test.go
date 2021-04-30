@@ -22,7 +22,7 @@ func TestFind(t *testing.T) {
 	if err != nil {
 		t.Fatal("读取ip库文件失败")
 	}
-	//q.FormatMap() // 格式化数据到map
+	q.FormatMap() // 格式化数据到map
 	t.Log("开始测试Find函数")
 	errFlag := false
 	for index, result := range results {

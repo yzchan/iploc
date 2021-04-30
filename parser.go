@@ -9,19 +9,24 @@ import (
 	"os"
 )
 
-type record struct {
-	recordA string
-	recordB string
+type Record struct {
+	RecordA string
+	RecordB string
+}
+
+type Result struct {
+	StartIP net.IP
+	StopIP  net.IP
+	Record
 }
 
 type QQWryParser struct {
-	Len       int
-	buffers   []byte
-	indexHead uint32
-	indexTail uint32
-	decoder   *encoding.Decoder
-	maps      map[uint32]record
-	useMap    bool
+	buffers []byte
+	len     int
+	head    uint32
+	tail    uint32
+	enc     *encoding.Decoder
+	maps    map[uint32]Record
 }
 
 func NewQQWryParser(filepath string) (q *QQWryParser, err error) {
@@ -39,23 +44,27 @@ func NewQQWryParser(filepath string) (q *QQWryParser, err error) {
 	}
 
 	q.buffers = buffer
-	q.indexHead = binary.LittleEndian.Uint32(buffer[:4])
-	q.indexTail = binary.LittleEndian.Uint32(buffer[4:8])
-	q.Len = int((q.indexTail-q.indexHead)/7) + 1
-	q.decoder = simplifiedchinese.GBK.NewDecoder()
+	q.head = binary.LittleEndian.Uint32(buffer[:4])
+	q.tail = binary.LittleEndian.Uint32(buffer[4:8])
+	q.len = int((q.tail-q.head)/7) + 1
+	q.enc = simplifiedchinese.GBK.NewDecoder()
 
 	return q, nil
-
 }
 
 // 查询函数
 func (q *QQWryParser) Find(ipStr string) (recordA string, recordB string) {
 	ip := binary.BigEndian.Uint32(net.ParseIP(ipStr).To4())
-	if q.useMap {
+	if len(q.maps) > 0 {
 		return q.findInMap(ip)
 	}
 	_, _, areaOffset := q.searchIndex(ip)
 	return q.readRecords(areaOffset)
+}
+
+// TODO 标准查询函数，接收 net.IP 类型的参数
+func (q *QQWryParser) Query(ip net.IP) (recordA string, recordB string) {
+	return
 }
 
 // 返回版本信息
@@ -65,11 +74,10 @@ func (q *QQWryParser) Version() string {
 }
 
 func (q *QQWryParser) FormatMap() {
-	q.maps = make(map[uint32]record, q.Len)
-	q.useMap = true
-	for i := q.indexHead; i <= q.indexTail; i += 7 {
+	q.maps = make(map[uint32]Record, q.len)
+	for i := q.head; i <= q.tail; i += 7 {
 		recordA, recordB := q.readRecords(q.fillOffset(q.buffers[i+4 : i+7]))
-		q.maps[binary.LittleEndian.Uint32(q.buffers[i:i+4])] = record{recordA, recordB}
+		q.maps[binary.LittleEndian.Uint32(q.buffers[i:i+4])] = Record{recordA, recordB}
 	}
 }
 
@@ -79,7 +87,7 @@ func (q *QQWryParser) findInMap(ip uint32) (string, string) {
 	if !ok {
 		return "", ""
 	}
-	return r.recordA, r.recordB
+	return r.RecordA, r.RecordB
 }
 
 /**
@@ -102,14 +110,14 @@ func (q *QQWryParser) readIndex(offset uint32) (startIp uint32, recordOffset uin
 
 func (q *QQWryParser) searchIndex(target uint32) (indexOffset uint32, startIp uint32, recordOffset uint32) {
 	head := uint32(0)
-	tail := (q.indexTail-q.indexHead)/7 + 1
+	tail := (q.tail-q.head)/7 + 1
 
 	mid := (head + tail) / 2
 	var ipMid uint32
 	for i := 0; ; i++ {
-		ipMid, recordOffset = q.readIndex(mid*7 + q.indexHead)
+		ipMid, recordOffset = q.readIndex(mid*7 + q.head)
 		if head == mid {
-			indexOffset = mid*7 + q.indexHead
+			indexOffset = mid*7 + q.head
 			startIp = ipMid
 			return
 		}
@@ -164,8 +172,8 @@ func (q *QQWryParser) readRecord(offset uint32) (record string, cursor uint32) {
 		}
 	}
 	buff := q.buffers[offset:cursor]
-	record, _ = q.decoder.String(string(buff))
-	//record = string(buff)
+	record, _ = q.enc.String(string(buff))
+	//Record = string(buff)
 	cursor++
 	return
 }

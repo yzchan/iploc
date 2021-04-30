@@ -3,7 +3,7 @@ ip归属地查询库（基于纯真ip库）
 
 ## About
 
-又一个基于纯真库的ip归属地查询程序。学习Golang练手的作品。
+又一个基于纯真ip库的解析程序。初学Golang练手的作品。
 
 ## Installation
 
@@ -44,13 +44,11 @@ goarch: amd64
 pkg: github.com/yzchan/ip-locate
 cpu: Intel(R) Core(TM) i5-7360U CPU @ 2.30GHz
 BenchmarkFind
-BenchmarkFind-4                  5165304               699.5 ns/op           568 B/op          6 allocs/op
+BenchmarkFind-4                  6399915               552.2 ns/op           568 B/op          6 allocs/op
 BenchmarkFindParallel
-BenchmarkFindParallel-4         10315946               573.7 ns/op           568 B/op          6 allocs/op
+BenchmarkFindParallel-4         12724434               335.8 ns/op           568 B/op          6 allocs/op
 PASS
-ok      github.com/yzchan/ip-locate     10.705s
-
-
+ok      github.com/yzchan/ip-locate     8.769s
 ```
 
 ## Features
