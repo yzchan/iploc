@@ -52,7 +52,7 @@ func NewQQWryParser(filepath string) (q *QQWryParser, err error) {
 	return q, nil
 }
 
-// 查询函数
+// Find 查询函数
 func (q *QQWryParser) Find(ipStr string) (recordA string, recordB string) {
 	ip := binary.BigEndian.Uint32(net.ParseIP(ipStr).To4())
 	if len(q.maps) > 0 {
@@ -62,12 +62,12 @@ func (q *QQWryParser) Find(ipStr string) (recordA string, recordB string) {
 	return q.readRecords(areaOffset)
 }
 
-// TODO 标准查询函数，接收 net.IP 类型的参数
+// Query TODO 标准查询函数，接收 net.IP 类型的参数
 func (q *QQWryParser) Query(ip net.IP) (recordA string, recordB string) {
 	return
 }
 
-// 返回版本信息
+// Version 返回版本信息
 func (q *QQWryParser) Version() string {
 	a, b := q.Find("255.255.255.0")
 	return a + b
