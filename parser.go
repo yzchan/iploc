@@ -63,9 +63,9 @@ func (q *QQWryParser) Find(ipStr string) (recordA string, recordB string) {
 }
 
 // Query TODO 标准查询函数，接收 net.IP 类型的参数
-func (q *QQWryParser) Query(ip net.IP) (recordA string, recordB string) {
-	return
-}
+//func (q *QQWryParser) Query(ip net.IP) (recordA string, recordB string) {
+//	return
+//}
 
 // Version 返回版本信息
 func (q *QQWryParser) Version() string {
