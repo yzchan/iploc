@@ -1,4 +1,4 @@
-package iplocate
+package iploc
 
 import (
 	"encoding/binary"

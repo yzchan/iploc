@@ -1,4 +1,4 @@
-package iplocate
+package iploc
 
 import (
 	"math/rand"
@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const filePath = "data/qqwry.dat"
+const filePath = "download/qqwry.dat"
 
 func TestFind(t *testing.T) {
 	var results = []struct {
@@ -16,7 +16,7 @@ func TestFind(t *testing.T) {
 	}{
 		{"0.0.0.1", "IANA", "保留地址"},
 		{"127.0.0.1", "本机地址", ""},
-		{"255.255.255.1", "纯真网络", "2021年04月14日IP数据"},
+		{"255.255.255.1", "纯真网络", "2022年04月27日IP数据"},
 	}
 	q, err := NewQQWryParser(filePath)
 	if err != nil {
