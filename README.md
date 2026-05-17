@@ -1,240 +1,203 @@
-ip归属地查询库（基于纯真ip库）
------
+# iploc
 
-## About
+[![CI](https://github.com/yzchan/iploc/actions/workflows/ci.yml/badge.svg)](https://github.com/yzchan/iploc/actions/workflows/ci.yml)
 
-纯真ip库Golang解析程序。[社区版](https://www.cz88.net/geo-public) 可关注公众号免费下载(2022年05月)。
+A Go library and CLI for querying IPv4 locations from QQWry / 纯真 IP database files. IPv6 is not supported.
+
+`iploc` loads a QQWry `.dat` file into memory, searches the IPv4 index with binary search, resolves QQWry record redirects, and converts GBK record text to UTF-8. It is designed for Go applications, shell scripts, and agent/AI tool integrations that need deterministic local IP-location lookup.
+
+## Features
+
+- Pure Go QQWry parser for IPv4 location records.
+- IPv4-only by design; IPv6 input returns `ErrInvalidIP`.
+- Error-aware API via `Query(net.IP)`.
+- Backward-compatible `Find(string)` API for existing callers.
+- Optional `FormatMap()` preload mode for faster repeated lookups.
+- CLI query tool with text, JSON, and JSONL output.
+- Stdin and multi-IP input for scripts and agent workflows.
+- Fixture-based tests that do not depend on a specific QQWry data release.
+
+## Data Files
+
+The repository includes `data/qqwry-2021.04.14.dat` as a convenience sample for local testing and CLI demos because QQWry data can be difficult to obtain from public sources.
+
+The sample data may be outdated and should not be treated as authoritative production data. For production use, provide your own QQWry `.dat` file and pass its path to the Go API or CLI with `--db`.
+
+QQWry data rights belong to their respective owners. This project focuses on parsing and querying compatible `.dat` files.
 
 ## Installation
 
+Use the library from Go code:
+
 ```shell
-go get -u github.com/yzchan/iploc
+go get github.com/yzchan/iploc
 ```
 
-## Quickstart
+Install the CLI with Go:
+
+```shell
+go install github.com/yzchan/iploc/cmd/iploc@latest
+```
+
+Run the CLI from source:
+
+```shell
+go run ./cmd/iploc --help
+```
+
+Or build a local binary:
+
+```shell
+go build -o iploc ./cmd/iploc
+```
+
+## Go Usage
 
 ```go
 package main
 
 import (
+	"errors"
 	"fmt"
+	"net"
+
 	"github.com/yzchan/iploc"
 )
 
 func main() {
-	q, err := iploc.NewQQWryParser("/path/to/file/qqwry.dat")
+	q, err := iploc.NewQQWryParser("/path/to/qqwry.dat")
 	if err != nil {
 		panic(err)
 	}
-	textA, textB := q.Find("127.0.0.1")
-	fmt.Println(textA, textB)
+
+	recordA, recordB, err := q.Query(net.ParseIP("127.0.0.1"))
+	if errors.Is(err, iploc.ErrInvalidIP) {
+		panic("only IPv4 addresses are supported")
+	}
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(recordA, recordB)
 }
 ```
 
-## Benchmarks
+For existing code, `Find(string)` remains available and returns empty strings when the query would fail. New code should prefer `Query(net.IP)` so invalid input and database errors can be handled explicitly.
+
+## CLI Usage
+
+Query one IP:
 
 ```shell
-go test -v -run="none" -bench=. -benchmem -benchtime=3s
+go run ./cmd/iploc --db data/qqwry-2021.04.14.dat 127.0.0.1
 ```
 
+Query multiple IPs:
+
+```shell
+go run ./cmd/iploc --db data/qqwry-2021.04.14.dat 0.0.0.1 127.0.0.1
 ```
-// 测试环境 2017款13寸MacBookPro
+
+Read IPs from stdin:
+
+```shell
+printf '0.0.0.1\n127.0.0.1\n' | go run ./cmd/iploc --db data/qqwry-2021.04.14.dat
+```
+
+Emit JSONL for agent and CLI toolchains:
+
+```shell
+printf '0.0.0.1\nbad-ip\n' | go run ./cmd/iploc --db data/qqwry-2021.04.14.dat --format jsonl
+```
+
+Emit a JSON array:
+
+```shell
+go run ./cmd/iploc --db data/qqwry-2021.04.14.dat --format json 0.0.0.1 127.0.0.1
+```
+
+Useful flags:
+
+- `--format text|json|jsonl` controls output format; default is `text`.
+- `--map` preloads records into a map before querying.
+- `--fail-on-error` returns a non-zero exit code if any IP query fails.
+- `--version` prints the CLI version and exits.
+
+## API Overview
+
+- `NewQQWryParser(path)` loads a `.dat` file into memory.
+- `NewQQWryParserFromBytes(data)` creates a parser from bytes and copies the input.
+- `Query(ip)` returns record A, record B, and an error.
+- `QueryResult(ip)` returns the matched start IP, stop IP, record A, record B, and an error.
+- `Find(ipString)` keeps compatibility with older releases.
+- `FormatMap()` pre-parses records into a map for faster repeated lookups.
+- `VersionWithError()` / `Version()` reads the QQWry version record.
+
+Sentinel errors:
+
+- `ErrInvalidIP`
+- `ErrInvalidDatabase`
+- `ErrNilParser`
+
+## Benchmarks
+
+Benchmarks use the repository sample database at `data/qqwry-2021.04.14.dat`. Run them with:
+
+```shell
+go test -run='^$' -bench=. -benchmem -benchtime=3s
+```
+
+Latest local result:
+
+```text
+// Apple M4 Pro, Go 1.23.3, module minimum Go version 1.20
+// Database: data/qqwry-2021.04.14.dat
 goos: darwin
-goarch: amd64
+goarch: arm64
 pkg: github.com/yzchan/iploc
-cpu: Intel(R) Core(TM) i5-7360U CPU @ 2.30GHz
-BenchmarkFind
-BenchmarkFind-4                  6399915               552.2 ns/op           568 B/op          6 allocs/op
-BenchmarkFindParallel
-BenchmarkFindParallel-4         12724434               335.8 ns/op           568 B/op          6 allocs/op
+cpu: Apple M4 Pro
+BenchmarkFind-12             11545689        292.1 ns/op      600 B/op      7 allocs/op
+BenchmarkFindParallel-12     46296171         84.39 ns/op     600 B/op      7 allocs/op
+BenchmarkFindWithMap-12      28503196        123.4 ns/op       13 B/op      0 allocs/op
 PASS
-ok      github.com/yzchan/iploc     8.769s
+ok      github.com/yzchan/iploc     16.482s
 ```
 
-## Links
+The included sample database is useful for repeatable local measurements, but production performance still depends on your actual QQWry data file and query mix.
+
+## Releases
+
+Tagged releases build cross-platform CLI binaries with GitHub Actions. The release workflow injects the tag into `iploc --version`.
+
+Example local versioned build:
+
+```shell
+go build -ldflags "-X main.version=v0.0.0-dev" -o bin/iploc ./cmd/iploc
+./bin/iploc --version
+```
+
+## Documentation
+
+- [QQWry format and parser notes](docs/qqwry-format.md)
+- [Changelog](CHANGELOG.md)
+
+## Development
+
+```shell
+go test ./...
+go vet ./...
+go test -race ./...
+```
+
+The CI workflow runs test, vet, and race checks on supported Go versions.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE).
+
+## Related Links
 
 - [纯真(CZ88.net)](https://www.cz88.net/)
 - [kayon/iploc](https://github.com/kayon/iploc)
 - [freshcn/qqwry](https://github.com/freshcn/qqwry)
 - [Dnomd343](https://zhuanlan.zhihu.com/p/360624952)
-
-## 纯真ip库的存储格式与解析方式浅析
-
-### 存储结构分析
-
-[纯真IP库](https://www.cz88.net/) 是一个打包了起始IP、终止IP、记录A和记录B的二进制文件。分为三个区域：[头部区]、[记录区]和[索引区]。
-
-[头部区]共8个字节，前4个字节指示[索引区]的开始地址，后4个字节指示最后一条索引的地址偏移量。
-
-[记录区]存放了终止IP数据、记录A和记录B。记录区每条记录前4个字节为终止ip，后面跟着记录A和记录B的信息，为了节省空间使用了重定向机制。记录A和记录B使用GBK编码。
-
-[索引区]存放的是起始IP和指向记录区地址偏移量。每条索引占用7个字节，前4个字节为起始IP，后3个字节为偏移。
-
-用hexdump来查看一下文件（以download目录下的的2021.04.14日的ip库为例）
-
-```shell
-hexdump -n 32 qqwry-2021.04.14.dat
-```
-
-结果为
-
-```
-[hexdump结果1]
-0000000 7b 9e 66 00 92 1f 9f 00 - ff ff ff 00 49 41 4e 41
-0000010 00 b1 a3 c1 f4 b5 d8 d6 - b7 00 00 00 00 01 c3 c0
-0000020
-```
-
-开始的头8个字节"7b 9e 66 00 92 1f 9f 00"就是索引区的偏移量。这边使用的是小端存储，可以得知第一条和最后一条记录记录的偏移量
-分别为0x00669e7b、0x009f1f92。
-
-顺便看下[索引区]后面跟着是记录区，记录区的头4个字节是一个IP段终止IP的地址，也就是说后面跟着的"ff ff ff 00"应该指示的是一个IP地址（这个后面分析）。 再后面的的"49 41 4e 41 00"
-应该就是这条记录的记录A的内容了（记录区的内容都是遇0x00表示结束）。 用 [GBK解码网站](https://www.qqxiuzi.cn/bianma/zifuji.php) 查一下，"49 41 4e 41"就是"
-IANA"的ASCII码表示（GBK兼容ASCII码，对于ASCII码依然使用一位存储，中文使用两位存储）。
-
-"49 41 4e 41 00"后面跟着的"b1 a3 c1 f4 b5 d8 d6 b7 00"就是记录B的内容。这里就不像是ASCII码了，我们把每两位合并起来得到"b1a3 c1f4 b5d8 d6b7"
-，再使用上述GBK网站查询得到结果"保留地址"。 可见这边GBK也是采用大端存储。
-
-> 关于大端和小端
-> 其实就是当使用超过1个字节表示数据时在内存中是从左到右存放还是从右到左存放，大端符合我们的阅读习惯，而计算机内部小端用的更多
-
-到这里就分析出了[头部区]和[记录区]的格式，刚好第一条记录区的数据是没有重定向的，比较简单，终止ip后面直接跟着记录A和记录B的数据。
-
-接着分析[索引区]，使用上面分析得出的索引区偏移量继续hexdump
-
-```shell
-hexdump -n 32 -s 0x00669e7b qqwry-2021.04.14.dat # -s 表示设置偏移
-hexdump -n 32 -s 0x009f1f92 qqwry-2021.04.14.dat
-
-```
-
-结果分别为：
-
-```
-[hexdump结果2]
-0669e7b 00 00 00 00 08 00 00 00 - 00 00 01 1a 00 00 01 00
-0669e8b 00 01 48 00 00 02 00 00 - 01 6e 00 00 00 01 00 01
-0669e9b
-
-[hexdump结果3]
-09f1f92 00 ff ff ff 59 9e 66                           
-09f1f99
-
-```
-
-结果3很好理解："00 ff ff ff"就是最后一条ip记录，后面的"59 9e 66"是一个指向记录区的偏移量。虽然打印了32个字节，这里只显示了7个字节，是因为文件到此就结束了。
-
-ipv4地址本质上是一个数值，使用小端方式存储占用4个字节，"00 ff ff ff"的ipv4文本形式其实就是255.255.255.0。 后面跟着的"59 9e 66"
-是一个偏移量只有3个字节，是因为纯真ip库尺寸不大，而且记录区实在中间的（偏移数值比较小），所以3个字节完全存的下。 这里的偏移量是0x00669e59。
-
-再看结果2就更好理解了，32个字节包含了32/7=4个索引，我们按长度排列一下得到：
-
-```
-[分析结果]
-00 00 00 00 - 08 00 00 => ip 0.0.0.0 offset 0x08
-00 00 00 01 - 1a 00 00 => ip 1.0.0.0 offset 0x1a
-01 00 00 01 - 48 00 00 => ip 1.0.0.1 offset 0x48
-02 00 00 01 - 6e 00 00 => ip 1.0.0.2 offset 0x6e
-```
-
-看分析结果的第一条记录起始ip="0.0.0.0"，偏移量8正好指向[hexdump结果1]分析的第一条记录区"ff ff ff 00 49 41 4e 41"。 所以这条记录的完整信息为：
-
-```
-起始ip   0.0.0.0 
-终止ip   0.255.255.255 
-记录A IANA
-记录B 保留地址
-```
-
-用上述方法再分析出最后一条ip记录
-
-```
-起始ip   255.255.255.0
-终止ip   255.255.255.255 
-记录A 纯真网络 
-记录B 2021年04月14日IP数据 
-```
-
-这条记录没有实际意义，提示了纯真ip库的版本号
-
-### 索引的查找
-
-可见，纯真ip库是将所有ipv4区间进行分区存放，任何有效的ipv4地址都会被匹配到一个区间中。索引区每条索引占用7字节，所以需要查找所属区间也很简单，使用折半查找（二分查找）即可取得非常好的查询效率。
-2021年04月14日IP数据 共有数据：529010 条，折半查找最多20次，其时间复杂度为O(log n)。然后根据偏移量继续查询记录信息。
-
-### 记录区的重定向
-
-分析到这里，纯真ip库的数据存放结构大体就清楚了，但是记录区中很多数据是重复的，所以为了压缩ip库的文件大小，纯真ip库使用了内容重定向机制。
-简单来说就是终止ip后跟着的第一个字节的数据，如果是0x01或者0x02就表示该条记录的文本区域重定向走了（正常的字符不可能是0x01或者0x02，以此做区分），0x01或者0x02后面跟的就是重定向地址。
-
-0x01和0x02这两种重定向有所不同，0x01是整体重定向，0x02是局部重定向。
-
-0x02局部重定向表示当前的记录A或者记录B被重定向到了另一个地方，0x02后面跟着4个字节的就是偏移量，根据偏移量重新去查。 这里就有多种情况：
-
-- 记录A和记录B都没有重定向 （就是上面分析的第一条ip记录的情况）
-- 只有记录A重定向了，记录B未重定向
-- 只有记录B重定向了，记录A未重定向
-- 记录A和记录B都重定向了
-
-关于0x02的重定向可以使用一次递归处理，如果是0x02就递归调用当前函数。这样只需要封装一个读取记录A/记录B的递归函数，而无需考虑局部重定向的处理。递归最多调用1次，也不会造成过多栈上资源的浪费。
-
-如果读到了0x01整体重定向，表示记录A和记录B都在另一个地方，直接去新的地址查询。（也就意味着0x01只会跟在终止ip后面）。
-但是这里有一点要注意。当遇到0x01整体重定向到新的偏移地址时，依然可能会遇到0x02的局部重定向的情况（其实又是一次递归处理）
-
-关于0x01整体依然可以使用递归处理。当遇到最复杂的情况（先是整体重定向，然后记录A和记录B分别局部重定向）也只会有个位数的递归调用，无需担心性能。相比使用if/else判断上述各种情况从代码实现上要简洁的多。
-
-### 性能分析
-
-至此为止，一次查询函数的调用流程就很清楚了：
-
-- 第1步：ip字符串转成数值形式
-- 第2步：查找所属ip区间及记录区偏移量
-- 第3步：根据偏移量去记录区读取相关信息
-
-如果每次使用文件io的方式去查询效率就太低了。虽然节省内存，但使用场景受限。
-
-#### 常驻内存
-
-所以一般会选择把整个ip库文件加载并常驻内存，以微服务的形式对外提供服务，代价就就是牺牲30mb内存。
-
-此时基准测试结果如下：查询效率约为160w次/秒。
-
-```
-cpu: Intel(R) Core(TM) i5-7360U CPU @ 2.30GHz
-BenchmarkFind
-BenchmarkFind-4          6350968               604.4 ns/op           568 B/op          6 allocs/op
-PASS
-ok      github.com/yzchan/iploc     4.481s
-```
-
-#### GBK -> UTF8
-
-如果要进一步提升查询效率，可以在第三步上想办法了。读取记录区数据主要包含两部分操作：定位和处理重定向、GBK解码。
-
-先尝试不做GBK解码试试，直接返回string(buff)然后进行基准测试
-
-```
-cpu: Intel(R) Core(TM) i5-7360U CPU @ 2.30GHz
-BenchmarkFind
-BenchmarkFind-4         14217972               240.7 ns/op            40 B/op          3 allocs/op
-PASS
-ok      github.com/yzchan/iploc     3.746s
-```
-
-可见每次查询的60%的时间在做GBK解码。优化思路就是把纯真ip库提前转化成UTF-8格式然后再载入内存。[转化方法可以看这个库](https://github.com/kayon/iploc)
-此时查询效率达到了400w+次/秒。
-
-#### 使用hashmap存储解析结果
-
-还有一种思路是在初始化的时候直接把所有的ip的记录值都读取出来保存到一个map中，利用hashmap高效的Get操作（时间复杂度O(1)）来直接获取格式化后的记录值。
-这样不仅节约了转编码的时间，还节省了读取内容时的各种通定向处理所需的时间。但内存占用从30M达到了160M。
-
-```
-cpu: Intel(R) Core(TM) i5-7360U CPU @ 2.30GHz
-BenchmarkFind
-BenchmarkFind-4         18485007               188.5 ns/op            16 B/op          1 allocs/op
-PASS
-ok      github.com/yzchan/iploc     6.134s
-```
-
-此时查询效率可达500w+次/秒

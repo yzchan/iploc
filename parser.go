@@ -2,178 +2,372 @@ package iploc
 
 import (
 	"encoding/binary"
-	"golang.org/x/text/encoding"
+	"errors"
+	"fmt"
 	"golang.org/x/text/encoding/simplifiedchinese"
-	"io/ioutil"
 	"net"
 	"os"
 )
 
+const (
+	headerSize       = 8
+	indexSize        = 7
+	redirectModeAll  = 0x01
+	redirectModePart = 0x02
+	maxRedirectDepth = 8
+)
+
+var (
+	// ErrInvalidIP indicates that a query input cannot be represented as IPv4.
+	ErrInvalidIP = errors.New("iploc: invalid IPv4 address")
+
+	// ErrInvalidDatabase indicates that the QQWry database is truncated or malformed.
+	ErrInvalidDatabase = errors.New("iploc: invalid qqwry database")
+
+	// ErrNilParser indicates that a method was called on a nil parser.
+	ErrNilParser = errors.New("iploc: nil parser")
+)
+
+// Record contains the two text fields stored in a QQWry location record.
 type Record struct {
 	RecordA string
 	RecordB string
 }
 
+// Result describes a matched IP range and its associated QQWry record.
 type Result struct {
 	StartIP net.IP
 	StopIP  net.IP
 	Record
 }
 
+// QQWryParser is an in-memory parser for QQWry IPv4 databases.
 type QQWryParser struct {
 	buffers []byte
 	len     int
 	head    uint32
 	tail    uint32
-	enc     *encoding.Decoder
 	maps    map[uint32]Record
 }
 
+// NewQQWryParser loads a QQWry database file into memory.
 func NewQQWryParser(filepath string) (q *QQWryParser, err error) {
-	q = &QQWryParser{}
-
-	f, err := os.OpenFile(filepath, os.O_RDONLY, 0400)
+	buffer, err := os.ReadFile(filepath)
 	if err != nil {
-		return q, err
+		return nil, err
 	}
-	defer f.Close()
+	return newQQWryParser(buffer)
+}
 
-	buffer, err := ioutil.ReadAll(f)
-	if err != nil {
-		return q, err
+// NewQQWryParserFromBytes builds a parser from QQWry database bytes.
+// The input is copied so later caller-side mutations do not affect queries.
+func NewQQWryParserFromBytes(buffer []byte) (*QQWryParser, error) {
+	data := append([]byte(nil), buffer...)
+	return newQQWryParser(data)
+}
+
+func newQQWryParser(buffer []byte) (*QQWryParser, error) {
+	if len(buffer) < headerSize {
+		return nil, fmt.Errorf("%w: file is shorter than header", ErrInvalidDatabase)
 	}
 
-	q.buffers = buffer
-	q.head = binary.LittleEndian.Uint32(buffer[:4])
-	q.tail = binary.LittleEndian.Uint32(buffer[4:8])
-	q.len = int((q.tail-q.head)/7) + 1
-	q.enc = simplifiedchinese.GBK.NewDecoder()
+	q := &QQWryParser{
+		buffers: buffer,
+		head:    binary.LittleEndian.Uint32(buffer[:4]),
+		tail:    binary.LittleEndian.Uint32(buffer[4:8]),
+	}
 
+	if q.head < headerSize {
+		return nil, fmt.Errorf("%w: index head %d before header", ErrInvalidDatabase, q.head)
+	}
+	if q.tail < q.head {
+		return nil, fmt.Errorf("%w: index tail %d before head %d", ErrInvalidDatabase, q.tail, q.head)
+	}
+	if (q.tail-q.head)%indexSize != 0 {
+		return nil, fmt.Errorf("%w: index range is not aligned", ErrInvalidDatabase)
+	}
+	if _, err := q.readAt(q.tail, indexSize); err != nil {
+		return nil, err
+	}
+	q.len = int((q.tail-q.head)/indexSize) + 1
 	return q, nil
 }
 
-// Find 查询函数
+// Find queries an IPv4 string and returns record fields.
+// It is kept for backward compatibility; use Query in new code to receive errors.
 func (q *QQWryParser) Find(ipStr string) (recordA string, recordB string) {
-	ip := binary.BigEndian.Uint32(net.ParseIP(ipStr).To4())
-	if len(q.maps) > 0 {
-		return q.findInMap(ip)
-	}
-	_, _, areaOffset := q.searchIndex(ip)
-	return q.readRecords(areaOffset)
-}
-
-// Query TODO 标准查询函数，接收 net.IP 类型的参数
-//func (q *QQWryParser) Query(ip net.IP) (recordA string, recordB string) {
-//	return
-//}
-
-// Version 返回版本信息
-func (q *QQWryParser) Version() string {
-	a, b := q.Find("255.255.255.0")
-	return a + b
-}
-
-func (q *QQWryParser) FormatMap() {
-	q.maps = make(map[uint32]Record, q.len)
-	for i := q.head; i <= q.tail; i += 7 {
-		recordA, recordB := q.readRecords(q.fillOffset(q.buffers[i+4 : i+7]))
-		q.maps[binary.LittleEndian.Uint32(q.buffers[i:i+4])] = Record{recordA, recordB}
-	}
-}
-
-func (q *QQWryParser) findInMap(ip uint32) (string, string) {
-	_, ipu, _ := q.searchIndex(ip)
-	r, ok := q.maps[ipu]
-	if !ok {
-		return "", ""
-	}
-	return r.RecordA, r.RecordB
-}
-
-/**
- * 纯真ip库中有的数据只占用3个byte，这里填充为4byte的uint32
- */
-func (q *QQWryParser) fillOffset(b3 []byte) uint32 {
-	return uint32(b3[0]) | uint32(b3[1])<<8 | uint32(b3[2])<<16 | 00<<24
-}
-
-/**
- * 根据索引区偏移量读取索引区数据 返回起始ip和记录区偏移量
- * 索引区每条索引是一个长度为7的[]byte，前4个byte表示起始ip 后3个byte表示记录区偏移量
- */
-func (q *QQWryParser) readIndex(offset uint32) (startIp uint32, recordOffset uint32) {
-	ip := q.buffers[offset : offset+4]
-	startIp = binary.LittleEndian.Uint32(ip)
-	recordOffset = q.fillOffset(q.buffers[offset+4 : offset+7])
+	recordA, recordB, _ = q.Query(net.ParseIP(ipStr))
 	return
 }
 
-func (q *QQWryParser) searchIndex(target uint32) (indexOffset uint32, startIp uint32, recordOffset uint32) {
-	head := uint32(0)
-	tail := (q.tail-q.head)/7 + 1
+// Query looks up an IPv4 address and returns the matching QQWry record fields.
+func (q *QQWryParser) Query(ip net.IP) (recordA string, recordB string, err error) {
+	if q == nil {
+		return "", "", ErrNilParser
+	}
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return "", "", ErrInvalidIP
+	}
 
-	mid := (head + tail) / 2
-	var ipMid uint32
-	for i := 0; ; i++ {
-		ipMid, recordOffset = q.readIndex(mid*7 + q.head)
-		if head == mid {
-			indexOffset = mid*7 + q.head
-			startIp = ipMid
-			return
+	ipValue := binary.BigEndian.Uint32(ip4)
+	if len(q.maps) > 0 {
+		return q.findInMap(ipValue)
+	}
+
+	_, _, areaOffset, err := q.searchIndex(ipValue)
+	if err != nil {
+		return "", "", err
+	}
+	return q.readRecords(areaOffset, 0)
+}
+
+// QueryResult looks up an IPv4 address and returns the matching IP range and record.
+func (q *QQWryParser) QueryResult(ip net.IP) (Result, error) {
+	if q == nil {
+		return Result{}, ErrNilParser
+	}
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return Result{}, ErrInvalidIP
+	}
+
+	ipValue := binary.BigEndian.Uint32(ip4)
+	_, startIP, areaOffset, err := q.searchIndex(ipValue)
+	if err != nil {
+		return Result{}, err
+	}
+	stopIP, err := q.readStopIP(areaOffset)
+	if err != nil {
+		return Result{}, err
+	}
+
+	result := Result{
+		StartIP: uint32ToIP(startIP),
+		StopIP:  uint32ToIP(stopIP),
+	}
+	if len(q.maps) > 0 {
+		record, ok := q.maps[startIP]
+		if !ok {
+			return Result{}, fmt.Errorf("%w: map record missing for %d", ErrInvalidDatabase, startIP)
+		}
+		result.Record = record
+		return result, nil
+	}
+
+	recordA, recordB, err := q.readRecords(areaOffset, 0)
+	if err != nil {
+		return Result{}, err
+	}
+	result.Record = Record{RecordA: recordA, RecordB: recordB}
+	return result, nil
+}
+
+// Version returns the QQWry database version text.
+// It is kept for backward compatibility; use VersionWithError in new code.
+func (q *QQWryParser) Version() string {
+	a, b, _ := q.VersionWithError()
+	return a + b
+}
+
+// VersionWithError returns the QQWry database version record and any lookup error.
+func (q *QQWryParser) VersionWithError() (string, string, error) {
+	return q.Query(net.ParseIP("255.255.255.0"))
+}
+
+// FormatMap preloads parsed records into a map for faster later lookups.
+// Call it during initialization before serving concurrent queries.
+func (q *QQWryParser) FormatMap() error {
+	if q == nil {
+		return ErrNilParser
+	}
+	records := make(map[uint32]Record, q.len)
+	for i := q.head; i <= q.tail; i += 7 {
+		startIP, recordOffset, err := q.readIndex(i)
+		if err != nil {
+			return err
+		}
+		recordA, recordB, err := q.readRecords(recordOffset, 0)
+		if err != nil {
+			return err
+		}
+		records[startIP] = Record{recordA, recordB}
+	}
+	q.maps = records
+	return nil
+}
+
+func (q *QQWryParser) findInMap(ip uint32) (string, string, error) {
+	_, ipu, _, err := q.searchIndex(ip)
+	if err != nil {
+		return "", "", err
+	}
+	r, ok := q.maps[ipu]
+	if !ok {
+		return "", "", fmt.Errorf("%w: map record missing for %d", ErrInvalidDatabase, ipu)
+	}
+	return r.RecordA, r.RecordB, nil
+}
+
+func (q *QQWryParser) readStopIP(offset uint32) (uint32, error) {
+	buff, err := q.readAt(offset, 4)
+	if err != nil {
+		return 0, err
+	}
+	return binary.LittleEndian.Uint32(buff), nil
+}
+
+func uint32ToIP(ip uint32) net.IP {
+	buff := make(net.IP, net.IPv4len)
+	binary.BigEndian.PutUint32(buff, ip)
+	return buff
+}
+
+// 纯真ip库中有的数据只占用3个byte，这里填充为4byte的uint32。
+func fillOffset(b3 []byte) (uint32, error) {
+	if len(b3) < 3 {
+		return 0, fmt.Errorf("%w: 3-byte offset is truncated", ErrInvalidDatabase)
+	}
+	return uint32(b3[0]) | uint32(b3[1])<<8 | uint32(b3[2])<<16, nil
+}
+
+// 根据索引区偏移量读取索引区数据，返回起始ip和记录区偏移量。
+func (q *QQWryParser) readIndex(offset uint32) (startIP uint32, recordOffset uint32, err error) {
+	index, err := q.readAt(offset, indexSize)
+	if err != nil {
+		return 0, 0, err
+	}
+	recordOffset, err = fillOffset(index[4:7])
+	if err != nil {
+		return 0, 0, err
+	}
+	return binary.LittleEndian.Uint32(index[:4]), recordOffset, nil
+}
+
+func (q *QQWryParser) searchIndex(target uint32) (indexOffset uint32, startIP uint32, recordOffset uint32, err error) {
+	if q == nil {
+		return 0, 0, 0, ErrNilParser
+	}
+	if q.len <= 0 {
+		return 0, 0, 0, fmt.Errorf("%w: empty index", ErrInvalidDatabase)
+	}
+
+	head := uint32(0)
+	tail := uint32(q.len)
+	for head+1 < tail {
+		mid := (head + tail) / 2
+		ipMid, _, err := q.readIndex(q.head + mid*indexSize)
+		if err != nil {
+			return 0, 0, 0, err
 		}
 		if target < ipMid {
 			tail = mid
 		} else {
 			head = mid
 		}
-		mid = (head + tail) / 2
 	}
+	indexOffset = q.head + head*indexSize
+	startIP, recordOffset, err = q.readIndex(indexOffset)
+	return
 }
 
-/**
- * 根据偏移量整体读取记录A和记录B的值
- */
-func (q *QQWryParser) readRecords(offset uint32) (textA string, textB string) {
-	buff := q.buffers[offset : offset+8]
-	//fmt.Printf("%#08x: %#x %#x [%#x][%#x]\n", offset, buff[:4], buff[4:], buff[0], buff[4])
-	if buff[4] == 0x01 { //记录模式245
-		return q.readRecords(q.fillOffset(buff[5:]) - 4) // 非重定向模式 前4byte为指针 需要后移4位
+// 根据偏移量整体读取记录A和记录B的值。
+func (q *QQWryParser) readRecords(offset uint32, depth int) (textA string, textB string, err error) {
+	if depth > maxRedirectDepth {
+		return "", "", fmt.Errorf("%w: redirect depth exceeded", ErrInvalidDatabase)
+	}
+
+	buff, err := q.readAt(offset, headerSize)
+	if err != nil {
+		return "", "", err
+	}
+	if buff[4] == redirectModeAll {
+		nextOffset, err := fillOffset(buff[5:8])
+		if err != nil {
+			return "", "", err
+		}
+		if nextOffset < 4 {
+			return "", "", fmt.Errorf("%w: invalid redirect offset %d", ErrInvalidDatabase, nextOffset)
+		}
+		return q.readRecords(nextOffset-4, depth+1)
 	}
 
 	var pos2 uint32
-	textA, pos2 = q.readRecord(offset + 4)
-	textB, _ = q.readRecord(pos2)
+	textA, pos2, err = q.readRecord(offset+4, depth)
+	if err != nil {
+		return "", "", err
+	}
+	textB, _, err = q.readRecord(pos2, depth)
+	if err != nil {
+		return "", "", err
+	}
 	if textB == " CZ88.NET" {
 		textB = ""
 	}
 	return
 }
 
-/**
- * 读取记录A/记录B：需传入偏移量。返回记录A/记录B的值，同时返回新的偏移量
- * 因为记录A/记录B存储采用c语言字符数组的方式（遇到\0表示结束）
- * 所以读取记录B需要知道记录A的长度，所以在读取记录A的时候返回新的偏移量供读取记录B使用
- */
-func (q *QQWryParser) readRecord(offset uint32) (record string, cursor uint32) {
-	cursor = offset
-	// 先预读4个byte的内容分析 如果第一个字节是0x02说明是重定向
-	b4 := q.buffers[offset : offset+4]
-
-	if b4[0] == 0x02 {
-		record, cursor = q.readRecord(q.fillOffset(b4[1:]))
-		return record, offset + 4
+// 读取记录A/记录B：需传入偏移量。返回记录值，同时返回新的偏移量。
+func (q *QQWryParser) readRecord(offset uint32, depth int) (record string, cursor uint32, err error) {
+	if depth > maxRedirectDepth {
+		return "", 0, fmt.Errorf("%w: redirect depth exceeded", ErrInvalidDatabase)
 	}
 
-	// 重新开始读取，遇到\0结束
+	cursor = offset
+	b4, err := q.readAt(offset, 4)
+	if err != nil {
+		return "", 0, err
+	}
+
+	if b4[0] == redirectModePart {
+		nextOffset, err := fillOffset(b4[1:4])
+		if err != nil {
+			return "", 0, err
+		}
+		record, _, err = q.readRecord(nextOffset, depth+1)
+		return record, offset + 4, err
+	}
+
 	for {
-		cursor++
-		if q.buffers[cursor] == 0x00 {
+		b, err := q.byteAt(cursor)
+		if err != nil {
+			return "", 0, fmt.Errorf("%w: unterminated record at offset %d", ErrInvalidDatabase, offset)
+		}
+		if b == 0x00 {
 			break
 		}
+		cursor++
 	}
-	buff := q.buffers[offset:cursor]
-	record, _ = q.enc.String(string(buff))
-	//Record = string(buff)
-	cursor++
-	return
+	buff, err := q.readAt(offset, int(cursor-offset))
+	if err != nil {
+		return "", 0, err
+	}
+	record, err = simplifiedchinese.GBK.NewDecoder().String(string(buff))
+	if err != nil {
+		return "", 0, err
+	}
+	return record, cursor + 1, nil
+}
+
+func (q *QQWryParser) readAt(offset uint32, length int) ([]byte, error) {
+	if q == nil {
+		return nil, ErrNilParser
+	}
+	if length < 0 {
+		return nil, fmt.Errorf("%w: negative read length", ErrInvalidDatabase)
+	}
+	end := uint64(offset) + uint64(length)
+	if end > uint64(len(q.buffers)) {
+		return nil, fmt.Errorf("%w: offset %d length %d exceeds file size %d", ErrInvalidDatabase, offset, length, len(q.buffers))
+	}
+	start := int(offset)
+	return q.buffers[start : start+length], nil
+}
+
+func (q *QQWryParser) byteAt(offset uint32) (byte, error) {
+	buff, err := q.readAt(offset, 1)
+	if err != nil {
+		return 0, err
+	}
+	return buff[0], nil
 }
