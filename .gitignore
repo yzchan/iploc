@@ -21,3 +21,4 @@
 
 # Local build outputs
 /bin/
+.codex

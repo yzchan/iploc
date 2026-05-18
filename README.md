@@ -2,56 +2,60 @@
 
 [![CI](https://github.com/yzchan/iploc/actions/workflows/ci.yml/badge.svg)](https://github.com/yzchan/iploc/actions/workflows/ci.yml)
 
-A Go library and CLI for querying IPv4 locations from QQWry / 纯真 IP database files. IPv6 is not supported.
+`iploc` 是一个用于查询旧版 QQWry / 纯真 IP `.dat` 数据库的 Go 库和命令行工具。项目仅支持 IPv4，不支持 IPv6。
 
-`iploc` loads a QQWry `.dat` file into memory, searches the IPv4 index with binary search, resolves QQWry record redirects, and converts GBK record text to UTF-8. It is designed for Go applications, shell scripts, and agent/AI tool integrations that need deterministic local IP-location lookup.
+> [!IMPORTANT]
+> 本项目只针对旧版 QQWry / 纯真 IP `.dat` 格式。新版 CZ88 / 纯真 IP 数据库已经改用 `.czdb` 格式，和本项目当前解析器不兼容。如果你需要查询新版 CZDB 数据，建议使用 [tagphi/czdb-search-golang](https://github.com/tagphi/czdb-search-golang)。本仓库主要作为旧版 `.dat` 数据库的历史兼容项目保留。
 
-## Features
+`iploc` 会把 QQWry `.dat` 文件加载到内存中，通过二分查找定位 IPv4 索引，解析 QQWry 记录区跳转，并把 GBK 编码的地区文本转换为 UTF-8。它适用于仍然需要查询旧版纯真 IP 库的 Go 程序、Shell 脚本和本地 CLI 集成场景。
 
-- Pure Go QQWry parser for IPv4 location records.
-- IPv4-only by design; IPv6 input returns `ErrInvalidIP`.
-- Error-aware API via `Query(net.IP)`.
-- Backward-compatible `Find(string)` API for existing callers.
-- Optional `FormatMap()` preload mode for faster repeated lookups.
-- CLI query tool with text, JSON, and JSONL output.
-- Stdin and multi-IP input for scripts and agent workflows.
-- Fixture-based tests that do not depend on a specific QQWry data release.
+## 功能特性
 
-## Data Files
+- 纯 Go 实现的 QQWry IPv4 记录解析器。
+- 仅支持 IPv4；IPv6 或非法 IP 会返回 `ErrInvalidIP`。
+- 提供带错误返回的 `Query(net.IP)` API。
+- 保留兼容旧代码的 `Find(string)` API。
+- 支持 `FormatMap()` 预加载模式，用于提升重复查询性能。
+- 提供 `cmd/iploc` 命令行工具。
+- CLI 支持文本、JSON、JSONL 输出。
+- CLI 支持 stdin、多 IP 输入，方便脚本和 Agent 工具调用。
+- 测试使用小型 fixture，不依赖某个特定的 QQWry 数据版本。
 
-The repository includes `data/qqwry-2021.04.14.dat` as a convenience sample for local testing and CLI demos because QQWry data can be difficult to obtain from public sources.
+## 数据文件
 
-The sample data may be outdated and should not be treated as authoritative production data. For production use, provide your own QQWry `.dat` file and pass its path to the Go API or CLI with `--db`.
+仓库包含 `data/qqwry-2021.04.14.dat`，主要用于本地测试和 CLI 示例。由于旧版纯真 IP `.dat` 文件现在不太容易从公开渠道获取，所以这里保留一份样例数据，方便调试。
 
-QQWry data rights belong to their respective owners. This project focuses on parsing and querying compatible `.dat` files.
+需要注意：该样例数据已经比较旧，不应作为生产环境的权威数据。生产环境请自行提供需要使用的 QQWry `.dat` 文件，并通过 Go API 或 CLI 的 `--db` 参数指定路径。
 
-## Installation
+QQWry / 纯真 IP 数据版权归其对应权利方所有。本项目只关注兼容格式的解析和查询。
 
-Use the library from Go code:
+## 安装
+
+在 Go 项目中使用：
 
 ```shell
 go get github.com/yzchan/iploc
 ```
 
-Install the CLI with Go:
+安装 CLI：
 
 ```shell
 go install github.com/yzchan/iploc/cmd/iploc@latest
 ```
 
-Run the CLI from source:
+从源码运行 CLI：
 
 ```shell
 go run ./cmd/iploc --help
 ```
 
-Or build a local binary:
+构建本地二进制：
 
 ```shell
 go build -o iploc ./cmd/iploc
 ```
 
-## Go Usage
+## Go 使用示例
 
 ```go
 package main
@@ -82,72 +86,72 @@ func main() {
 }
 ```
 
-For existing code, `Find(string)` remains available and returns empty strings when the query would fail. New code should prefer `Query(net.IP)` so invalid input and database errors can be handled explicitly.
+`Find(string)` 会继续保留，用于兼容已有代码；当查询失败时它会返回空字符串。新代码建议使用 `Query(net.IP)`，这样可以显式处理非法 IP 和数据库错误。
 
-## CLI Usage
+## CLI 使用示例
 
-Query one IP:
+查询单个 IP：
 
 ```shell
 go run ./cmd/iploc --db data/qqwry-2021.04.14.dat 127.0.0.1
 ```
 
-Query multiple IPs:
+查询多个 IP：
 
 ```shell
 go run ./cmd/iploc --db data/qqwry-2021.04.14.dat 0.0.0.1 127.0.0.1
 ```
 
-Read IPs from stdin:
+从 stdin 读取 IP：
 
 ```shell
 printf '0.0.0.1\n127.0.0.1\n' | go run ./cmd/iploc --db data/qqwry-2021.04.14.dat
 ```
 
-Emit JSONL for agent and CLI toolchains:
+输出 JSONL，方便脚本或 Agent 工具链处理：
 
 ```shell
 printf '0.0.0.1\nbad-ip\n' | go run ./cmd/iploc --db data/qqwry-2021.04.14.dat --format jsonl
 ```
 
-Emit a JSON array:
+输出 JSON 数组：
 
 ```shell
 go run ./cmd/iploc --db data/qqwry-2021.04.14.dat --format json 0.0.0.1 127.0.0.1
 ```
 
-Useful flags:
+常用参数：
 
-- `--format text|json|jsonl` controls output format; default is `text`.
-- `--map` preloads records into a map before querying.
-- `--fail-on-error` returns a non-zero exit code if any IP query fails.
-- `--version` prints the CLI version and exits.
+- `--format text|json|jsonl`：输出格式，默认是 `text`。
+- `--map`：查询前把记录预加载到 map 中。
+- `--fail-on-error`：只要有任意 IP 查询失败，就返回非零退出码。
+- `--version`：输出 CLI 版本号并退出。
 
-## API Overview
+## API 概览
 
-- `NewQQWryParser(path)` loads a `.dat` file into memory.
-- `NewQQWryParserFromBytes(data)` creates a parser from bytes and copies the input.
-- `Query(ip)` returns record A, record B, and an error.
-- `QueryResult(ip)` returns the matched start IP, stop IP, record A, record B, and an error.
-- `Find(ipString)` keeps compatibility with older releases.
-- `FormatMap()` pre-parses records into a map for faster repeated lookups.
-- `VersionWithError()` / `Version()` reads the QQWry version record.
+- `NewQQWryParser(path)`：从 `.dat` 文件加载数据库。
+- `NewQQWryParserFromBytes(data)`：从字节数据创建 parser，并复制输入数据。
+- `Query(ip)`：返回记录 A、记录 B 和错误。
+- `QueryResult(ip)`：返回命中的起始 IP、结束 IP、记录 A、记录 B 和错误。
+- `Find(ipString)`：兼容旧版本 API。
+- `FormatMap()`：提前解析记录并写入 map，用于提升重复查询性能。
+- `VersionWithError()` / `Version()`：读取 QQWry 数据库版本记录。
 
-Sentinel errors:
+错误类型：
 
 - `ErrInvalidIP`
 - `ErrInvalidDatabase`
 - `ErrNilParser`
 
-## Benchmarks
+## Benchmark
 
-Benchmarks use the repository sample database at `data/qqwry-2021.04.14.dat`. Run them with:
+Benchmark 使用仓库中的样例数据库 `data/qqwry-2021.04.14.dat`。运行方式：
 
 ```shell
 go test -run='^$' -bench=. -benchmem -benchtime=3s
 ```
 
-Latest local result:
+最近一次本地结果：
 
 ```text
 // Apple M4 Pro, Go 1.23.3, module minimum Go version 1.20
@@ -163,41 +167,17 @@ PASS
 ok      github.com/yzchan/iploc     16.482s
 ```
 
-The included sample database is useful for repeatable local measurements, but production performance still depends on your actual QQWry data file and query mix.
+样例数据库适合做可重复的本地测试，但生产性能仍然取决于实际使用的数据文件和查询模式。
 
-## Releases
+## 文档
 
-Tagged releases build cross-platform CLI binaries with GitHub Actions. The release workflow injects the tag into `iploc --version`.
+- [QQWry 格式和解析说明](docs/qqwry-format.md)
+- [更新日志](CHANGELOG.md)
 
-Example local versioned build:
+## 相关链接
 
-```shell
-go build -ldflags "-X main.version=v0.0.0-dev" -o bin/iploc ./cmd/iploc
-./bin/iploc --version
-```
-
-## Documentation
-
-- [QQWry format and parser notes](docs/qqwry-format.md)
-- [Changelog](CHANGELOG.md)
-
-## Development
-
-```shell
-go test ./...
-go vet ./...
-go test -race ./...
-```
-
-The CI workflow runs test, vet, and race checks on supported Go versions.
-
-## License
-
-This project is licensed under the MIT License. See [LICENSE](LICENSE).
-
-## Related Links
-
-- [纯真(CZ88.net)](https://www.cz88.net/)
+- [纯真 CZ88.net](https://www.cz88.net/)
+- [tagphi/czdb-search-golang](https://github.com/tagphi/czdb-search-golang)
 - [kayon/iploc](https://github.com/kayon/iploc)
 - [freshcn/qqwry](https://github.com/freshcn/qqwry)
 - [Dnomd343](https://zhuanlan.zhihu.com/p/360624952)
